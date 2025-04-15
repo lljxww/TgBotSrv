@@ -3,6 +3,9 @@ using System.Text.Json;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.Enums;
+using TgBotSrv.Services;
+using TgBotSrv.Models;
 
 Console.WriteLine("Bot is starting...");
 
@@ -15,6 +18,9 @@ string DEEPSEEK_API_KEY = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY")
 
 TelegramBotClient botClient = new(BOT_TOKEN);
 using CancellationTokenSource cts = new();
+
+var userService = new UserService();
+var commandService = new CommandService(userService, botClient);
 
 ReceiverOptions receiverOptions = new()
 {
@@ -43,7 +49,6 @@ while (true)
 
 async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken cancellationToken)
 {
-    // 只处理文本消息
     if (update.Message is not { } message || message.Text is not { } messageText)
     {
         return;
@@ -51,10 +56,19 @@ async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, Cancel
 
     long chatId = message.Chat.Id;
     string userName = message.From?.FirstName ?? "User";
+    long userId = message.From?.Id ?? 0;
 
     Console.WriteLine($"Received '{messageText}' from {userName} in chat {chatId}");
 
-    await ResponseByDeepSeek(chatId, messageText, cancellationToken);
+    // 处理命令
+    if (messageText.StartsWith("/"))
+    {
+        await commandService.HandleCommand(message, cancellationToken);
+        return;
+    }
+
+    // 处理普通消息
+    await ResponseByDeepSeek(chatId, userId, messageText, cancellationToken);
 }
 
 async Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
@@ -65,19 +79,52 @@ async Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, C
     }, cancellationToken);
 }
 
-async Task ResponseByDeepSeek(long chatId, string messageText, CancellationToken cancellationToken)
+async Task ResponseByDeepSeek(long chatId, long userId, string messageText, CancellationToken cancellationToken)
 {
     try
     {
         Message thinkingMessage = await botClient.SendMessage(chatId: chatId, text: "🤔正在思考...", cancellationToken: cancellationToken);
 
-        string deepSeekResponse = await CallDeepSeekApi(messageText);
+        // 创建一个取消令牌源
+        using var thinkingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var thinkingTask = UpdateThinkingMessage(chatId, thinkingMessage.MessageId, thinkingCts.Token);
+
+        var settings = userService.GetUserSettings(userId);
+        string deepSeekResponse = await CallDeepSeekApi(messageText, settings);
 
         Console.WriteLine($"ChatId: {chatId}, DeepSeek: {deepSeekResponse}");
 
-        await botClient.DeleteMessage(chatId: chatId, messageId: thinkingMessage.MessageId, cancellationToken: cancellationToken);
+        // 取消等待提示
+        thinkingCts.Cancel();
+        try
+        {
+            await thinkingTask;
+        }
+        catch (OperationCanceledException)
+        {
+            // 忽略取消异常
+        }
 
-        await botClient.SendMessage(chatId: chatId, text: deepSeekResponse, cancellationToken: cancellationToken);
+        // 先删除等待消息
+        try
+        {
+            await botClient.DeleteMessage(chatId: chatId, messageId: thinkingMessage.MessageId, cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error deleting thinking message: {ex.Message}");
+        }
+
+        // 然后发送实际回复
+        await botClient.SendMessage(
+            chatId: chatId,
+            text: deepSeekResponse,
+            parseMode: ParseMode.Html,
+            cancellationToken: cancellationToken);
+
+        // 保存对话历史
+        userService.AddMessageToHistory(userId, "user", messageText);
+        userService.AddMessageToHistory(userId, "assistant", deepSeekResponse);
     }
     catch (Exception ex)
     {
@@ -89,19 +136,72 @@ async Task ResponseByDeepSeek(long chatId, string messageText, CancellationToken
     }
 }
 
-async Task<string> CallDeepSeekApi(string userMessage)
+async Task UpdateThinkingMessage(long chatId, int messageId, CancellationToken cancellationToken)
+{
+    string[] thinkingFrames = [
+        "🤔正在思考",
+        "🤔正在思考.",
+        "🤔正在思考..",
+        "🤔正在思考...",
+        "🤔正在思考....",
+        "🤔正在思考.....",
+    ];
+
+    int frameIndex = 0;
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        try
+        {
+            await botClient.EditMessageText(
+                chatId: chatId,
+                messageId: messageId,
+                text: thinkingFrames[frameIndex],
+                cancellationToken: cancellationToken);
+
+            frameIndex = (frameIndex + 1) % thinkingFrames.Length;
+            await Task.Delay(500, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // 正常取消，直接退出
+            break;
+        }
+        catch (Exception ex)
+        {
+            // 忽略编辑消息时的错误，因为消息可能已经被删除
+            if (!ex.Message.Contains("message to edit not found"))
+            {
+                Console.WriteLine($"Error updating thinking message: {ex.Message}");
+            }
+            break;
+        }
+    }
+}
+
+async Task<string> CallDeepSeekApi(string userMessage, UserSettings settings)
 {
     using HttpClient httpClient = new();
+
+    var messages = new List<object>
+    {
+        new { role = "system", content = "请使用HTML格式回复，而不是Markdown格式。Telegram只支持以下HTML标签：\n1. 粗体：使用<b>标签\n2. 斜体：使用<i>标签\n3. 代码：使用<code>标签\n4. 预格式化文本：使用<pre>标签\n5. 链接：使用<a href='url'>text</a>格式\n\n请确保只使用上述标签，不要使用其他HTML标签。对于换行，直接使用换行符即可。" }
+    };
+
+    // 添加历史消息
+    foreach (var msg in settings.ChatHistory)
+    {
+        messages.Add(new { role = msg.Role, content = msg.Content });
+    }
+
+    // 添加当前消息
+    messages.Add(new { role = "user", content = userMessage });
 
     var requestData = new
     {
         model = "deepseek-chat",
-        messages = new[]
-        {
-            new { role = "user", content = userMessage }
-        },
-        temperature = 0.7,
-        max_tokens = 2000
+        messages = messages.ToArray(),
+        temperature = settings.Temperature,
+        max_tokens = settings.MaxTokens
     };
 
     StringContent content = new(
