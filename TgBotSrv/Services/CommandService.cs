@@ -18,8 +18,8 @@ public class CommandService
 
     public async Task HandleCommand(Message message, CancellationToken cancellationToken)
     {
-        var command = message.Text?.Split(' ')[0].ToLower();
-        var userId = message.From?.Id ?? 0;
+        string? command = message.Text?.Split(' ')[0].ToLower();
+        long userId = message.From?.Id ?? 0;
 
         switch (command)
         {
@@ -49,7 +49,7 @@ public class CommandService
 
     private async Task HandleStartCommand(Message message, CancellationToken cancellationToken)
     {
-        var welcomeMessage = @"👋 欢迎使用AI助手！
+        string welcomeMessage = @"👋 欢迎使用AI助手！
 
 使用以下命令：
 /help - 显示帮助信息
@@ -68,7 +68,7 @@ public class CommandService
 
     private async Task HandleHelpCommand(Message message, CancellationToken cancellationToken)
     {
-        var helpMessage = @"📚 命令列表：
+        string helpMessage = @"📚 命令列表：
 
 /start - 显示欢迎信息
 /help - 显示此帮助信息
@@ -87,7 +87,7 @@ public class CommandService
 
     private async Task HandleClearCommand(Message message, CancellationToken cancellationToken)
     {
-        var userId = message.From?.Id ?? 0;
+        long userId = message.From?.Id ?? 0;
         _userService.ClearHistory(userId);
 
         await _botClient.SendMessage(
@@ -98,10 +98,10 @@ public class CommandService
 
     private async Task HandleSettingsCommand(Message message, CancellationToken cancellationToken)
     {
-        var userId = message.From?.Id ?? 0;
-        var settings = _userService.GetUserSettings(userId);
+        long userId = message.From?.Id ?? 0;
+        UserSettings settings = _userService.GetUserSettings(userId);
 
-        var settingsMessage = $@"⚙️ 当前设置：
+        string settingsMessage = $@"⚙️ 当前设置：
 
 语言：{settings.Language}
 温度：{settings.Temperature}
@@ -119,7 +119,7 @@ public class CommandService
 
     private async Task HandleLanguageCommand(Message message, CancellationToken cancellationToken)
     {
-        var args = message.Text?.Split(' ');
+        string[]? args = message.Text?.Split(' ');
         if (args?.Length != 2)
         {
             await _botClient.SendMessage(
@@ -129,8 +129,8 @@ public class CommandService
             return;
         }
 
-        var userId = message.From?.Id ?? 0;
-        var settings = _userService.GetUserSettings(userId);
+        long userId = message.From?.Id ?? 0;
+        UserSettings settings = _userService.GetUserSettings(userId);
         settings.Language = args[1];
         _userService.UpdateUserSettings(userId, settings);
 
@@ -139,4 +139,4 @@ public class CommandService
             text: $"✅ 语言已设置为：{settings.Language}",
             cancellationToken: cancellationToken);
     }
-} 
+}

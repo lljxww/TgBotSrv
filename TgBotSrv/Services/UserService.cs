@@ -33,7 +33,7 @@ public class UserService
 
     public void AddMessageToHistory(long userId, string role, string content)
     {
-        var settings = GetUserSettings(userId);
+        UserSettings settings = GetUserSettings(userId);
         settings.ChatHistory.Add(new ChatMessage { Role = role, Content = content });
 
         // 只保留最近的20条消息
@@ -47,7 +47,7 @@ public class UserService
 
     public void ClearHistory(long userId)
     {
-        var settings = GetUserSettings(userId);
+        UserSettings settings = GetUserSettings(userId);
         settings.ChatHistory.Clear();
         SaveSettings();
     }
@@ -58,8 +58,8 @@ public class UserService
         {
             if (File.Exists(SETTINGS_FILE))
             {
-                var json = File.ReadAllText(SETTINGS_FILE);
-                var settings = JsonSerializer.Deserialize<Dictionary<long, UserSettings>>(json);
+                string json = File.ReadAllText(SETTINGS_FILE);
+                Dictionary<long, UserSettings>? settings = JsonSerializer.Deserialize<Dictionary<long, UserSettings>>(json);
                 if (settings != null)
                 {
                     _userSettings = settings;
@@ -76,7 +76,7 @@ public class UserService
     {
         try
         {
-            var json = JsonSerializer.Serialize(_userSettings);
+            string json = JsonSerializer.Serialize(_userSettings);
             File.WriteAllText(SETTINGS_FILE, json);
         }
         catch (Exception ex)

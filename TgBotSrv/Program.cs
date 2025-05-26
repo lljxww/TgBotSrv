@@ -4,8 +4,8 @@ using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
-using TgBotSrv.Services;
 using TgBotSrv.Models;
+using TgBotSrv.Services;
 
 Console.WriteLine("Bot is starting...");
 
@@ -19,8 +19,8 @@ string DEEPSEEK_API_KEY = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY")
 TelegramBotClient botClient = new(BOT_TOKEN);
 using CancellationTokenSource cts = new();
 
-var userService = new UserService();
-var commandService = new CommandService(userService, botClient);
+UserService userService = new UserService();
+CommandService commandService = new CommandService(userService, botClient);
 
 ReceiverOptions receiverOptions = new()
 {
@@ -68,7 +68,7 @@ async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, Cancel
     }
 
     // 处理普通消息
-    await ResponseByDeepSeek(chatId, userId, messageText, cancellationToken);
+    await ResponseByDeepSeek(chatId, userId, messageText, message, cancellationToken);
 }
 
 async Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
@@ -79,17 +79,17 @@ async Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, C
     }, cancellationToken);
 }
 
-async Task ResponseByDeepSeek(long chatId, long userId, string messageText, CancellationToken cancellationToken)
+async Task ResponseByDeepSeek(long chatId, long userId, string messageText, Message originalMessage, CancellationToken cancellationToken)
 {
     try
     {
         Message thinkingMessage = await botClient.SendMessage(chatId: chatId, text: "🤔正在思考...", cancellationToken: cancellationToken);
 
         // 创建一个取消令牌源
-        using var thinkingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var thinkingTask = UpdateThinkingMessage(chatId, thinkingMessage.MessageId, thinkingCts.Token);
+        using CancellationTokenSource thinkingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task thinkingTask = UpdateThinkingMessage(chatId, thinkingMessage.MessageId, thinkingCts.Token);
 
-        var settings = userService.GetUserSettings(userId);
+        UserSettings settings = userService.GetUserSettings(userId);
         string deepSeekResponse = await CallDeepSeekApi(messageText, settings);
 
         Console.WriteLine($"ChatId: {chatId}, DeepSeek: {deepSeekResponse}");
@@ -115,11 +115,12 @@ async Task ResponseByDeepSeek(long chatId, long userId, string messageText, Canc
             Console.WriteLine($"Error deleting thinking message: {ex.Message}");
         }
 
-        // 然后发送实际回复
+        // 然后发送实际回复，引用用户的消息
         await botClient.SendMessage(
             chatId: chatId,
             text: deepSeekResponse,
             parseMode: ParseMode.Html,
+            replyParameters: new ReplyParameters { MessageId = originalMessage.MessageId },
             cancellationToken: cancellationToken);
 
         // 保存对话历史
@@ -182,13 +183,13 @@ async Task<string> CallDeepSeekApi(string userMessage, UserSettings settings)
 {
     using HttpClient httpClient = new();
 
-    var messages = new List<object>
+    List<object> messages = new List<object>
     {
         new { role = "system", content = "请使用HTML格式回复，而不是Markdown格式。Telegram只支持以下HTML标签：\n1. 粗体：使用<b>标签\n2. 斜体：使用<i>标签\n3. 代码：使用<code>标签\n4. 预格式化文本：使用<pre>标签\n5. 链接：使用<a href='url'>text</a>格式\n\n请确保只使用上述标签，不要使用其他HTML标签。对于换行，直接使用换行符即可。" }
     };
 
     // 添加历史消息
-    foreach (var msg in settings.ChatHistory)
+    foreach (ChatMessage msg in settings.ChatHistory)
     {
         messages.Add(new { role = msg.Role, content = msg.Content });
     }
