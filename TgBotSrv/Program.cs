@@ -19,8 +19,8 @@ string DEEPSEEK_API_KEY = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY")
 TelegramBotClient botClient = new(BOT_TOKEN);
 using CancellationTokenSource cts = new();
 
-UserService userService = new UserService();
-CommandService commandService = new CommandService(userService, botClient);
+UserService userService = new();
+CommandService commandService = new(userService, botClient);
 
 ReceiverOptions receiverOptions = new()
 {
@@ -61,7 +61,7 @@ async Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, Cancel
     Console.WriteLine($"Received '{messageText}' from {userName} in chat {chatId}");
 
     // 处理命令
-    if (messageText.StartsWith("/"))
+    if (messageText.StartsWith('/'))
     {
         await commandService.HandleCommand(message, cancellationToken);
         return;

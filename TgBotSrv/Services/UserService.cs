@@ -45,6 +45,30 @@ public class UserService
         SaveSettings();
     }
 
+    public void AddRecord(long userId, string message)
+    {
+        var settings = GetUserSettings(userId);
+        settings.Records.Add(message);
+    }
+
+    public List<string> GetRecords(long userId)
+    {
+        var settings = GetUserSettings(userId);
+        return settings.Records;
+    }
+
+    public string GetRecord(long userId, int index)
+    {
+        var settings = GetUserSettings(userId);
+
+        if (settings.Records.Count <= index)
+        {
+            return string.Empty;
+        }
+
+        return settings.Records[index];
+    }
+
     public void ClearHistory(long userId)
     {
         UserSettings settings = GetUserSettings(userId);
